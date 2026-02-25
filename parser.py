@@ -1,3 +1,6 @@
+import argparse;
+import sys
+
 class Log:
     def __init__(self, timestamp, component_name, pid, event):
         self.timestamp = timestamp;
@@ -11,19 +14,17 @@ class Log:
     def __repr__(self):
         return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
 
-def calculate_frequencies(d):
+def print_frequencies(d):
     arr = [];
     sum = 0;
     for (k, v) in d.items():
-        arr.append((k, len(v)));
+        arr.append((len(v), k));
         sum += len(v);
-    arr = sorted(arr);
+    arr = sorted(arr)[::-1];
 
-    ret = []
-    for (k, v) in arr:
-        ret.append((k, (v/sum) * 100))
+    for (v, k) in arr:
+        print(f"{k}: encountered {v} times, {v/sum*100:.2f}%")
 
-    return ret;
 
 def parse_event(content: str):
     content = content.strip()
@@ -41,7 +42,11 @@ def parse_event(content: str):
         "event_data": ""
     }
 
+
+log_num = 0
+
 def parse_log_file(filepath):
+    global log_num
     logs = {}
 
     with open(filepath, "r", encoding="utf-8") as f:
@@ -63,17 +68,53 @@ def parse_log_file(filepath):
                 logs[component] = []
 
             logs[component].append(log)
+            log_num += 1
 
     return logs
+
+def parse_arguments(args):
+    if len(args) < 2:
+        print("Please provide a filename as a command-line argument")
+        sys.exit(1)
+    
+    abs_threshold = 100
+    rel_threshold = 0.15
+    args = args[1:]
+    for i,arg in enumerate(args[:-2]):
+        if arg == "-t":
+            abs_threshold = int(args[i + 1])
+        if arg == '-n':
+            rel_threshold = float(args[i + 1])
+
+    if abs_threshold < 0:
+        print("=== WARNING ===")
+        print("Absolute threshold must be greater/equal 0, using default value of 100")
+        print()
+        abs_threshold = 100
+    if rel_threshold < 0.0 or rel_threshold > 1.0:
+        print("=== WARNING ===")
+        print("Relative threshold must be between 0 and 1 (inclusive), using default value of 0.15")
+        print()
+        rel_threshold = 0.15
+    return (abs_threshold, rel_threshold, args[-1])
+
+
 
 
 # === RUN ===
 if __name__ == "__main__":
-    parsed_logs = parse_log_file("HealthApp.log")
+    (a, b, filename) = parse_arguments(sys.argv)
 
-    # Print first few entries for testing
-    calculate_frequencies(parsed_logs);
+    parsed_logs = parse_log_file(filename)
+    print(f"=== BASIC REPORT ===")
+    print(f"# events: {log_num}")
+    print()
+    print(f"Event frequency: ")
+    print_frequencies(parsed_logs);
+    print()
 
+
+"""
 if __name__ == "__main__":
     parsed_logs = parse_log_file("HealthApp.log")
 
@@ -89,3 +130,4 @@ if __name__ == "__main__":
     print("\nEvent Names:")
     for name in sorted(unique_events):
         print(name)
+"""
