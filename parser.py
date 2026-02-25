@@ -1,5 +1,15 @@
 import re
 
+class Log:
+    def __init__(self, timestamp, component_name, pid, event):
+        self.timestamp = timestamp;
+        self.component_name = component_name;
+        self.pid = int(pid);
+        self.event = event;
+
+    def __str__(self):
+        return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
+
 def parse_event(content: str):
     """
     Splits event content into name + data.
@@ -32,19 +42,9 @@ def parse_log_file(filepath):
 
             date_str, component, pid_str, content = parts
 
-            try:
-                pid = int(pid_str)
-            except ValueError:
-                continue  # skip bad PID lines
+            log = Log(date_str, component, pid_str, content);
 
-            log_entry = {
-                "date": date_str,
-                "Component_name": component,
-                "PID": pid,
-                "Event": parse_event(content)
-            }
-
-            logs.append(log_entry)
+            logs.append(log)
 
     return logs
 
