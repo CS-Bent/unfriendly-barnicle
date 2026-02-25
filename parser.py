@@ -38,18 +38,19 @@ def parse_log_file(filepath):
             if not line:
                 continue
 
-            # Split into main sections
             parts = line.split("|", 3)
             if len(parts) != 4:
-                continue  # skip malformed lines
+                continue
 
             date_str, component, pid_str, content = parts
 
-            log = Log(date_str, component, pid_str, content);
-            if log not in logs:
-                logs[log.component_name] = []
+            event = parse_event(content)
+            log = Log(date_str, component, pid_str, event)
 
-            logs[log.component_name].append(log)
+            if component not in logs:
+                logs[component] = []
+
+            logs[component].append(log)
 
     return logs
 
@@ -66,7 +67,11 @@ if __name__ == "__main__":
     parsed_logs = parse_log_file("HealthApp.log")
 
     # Collect unique event names
-    unique_events = set(log["Event"]["name"] for log in parsed_logs)
+    unique_events = set(
+        log.event["name"]
+        for logs in parsed_logs.values()
+        for log in logs
+    )
 
     # Print results
     print("Total unique event names:", len(unique_events))
