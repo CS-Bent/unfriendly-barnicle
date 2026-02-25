@@ -14,20 +14,20 @@ class Log:
         return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
 
 def parse_event(content: str):
-    """
-    Splits event content into name + data.
-    Example:
-        'onStandStepChanged 3579'
-        -> name='onStandStepChanged', data='3579'
-    """
-    parts = content.strip().split(" ", 1)
-    name = parts[0]
-    data = parts[1] if len(parts) > 1 else ""
-    return {
-        "name": name,
-        "event_data": data
-    }
+    content = content.strip()
 
+    for i, ch in enumerate(content):
+        if not ch.isalpha():  # first non-alphanumeric char
+            return {
+                "name": content[:i],
+                "event_data": content[i+1:].strip()
+            }
+
+    # no delimiter found
+    return {
+        "name": content,
+        "event_data": ""
+    }
 
 def parse_log_file(filepath):
     logs = {}
@@ -61,3 +61,15 @@ if __name__ == "__main__":
     # Print first few entries for testing
     for i, (k,v) in enumerate(parsed_logs.items()):
         print(f"key: {k}, value: {v[:1]}")
+
+if __name__ == "__main__":
+    parsed_logs = parse_log_file("HealthApp.log")
+
+    # Collect unique event names
+    unique_events = set(log["Event"]["name"] for log in parsed_logs)
+
+    # Print results
+    print("Total unique event names:", len(unique_events))
+    print("\nEvent Names:")
+    for name in sorted(unique_events):
+        print(name)
