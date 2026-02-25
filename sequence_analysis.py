@@ -1,20 +1,183 @@
 """
 sequence_analysis.py
 
-CLI entry point for analysing event sequences in a HealthApp log file.
-Imports functionality from event_names, sequence_graph and successor_tree.
+Extends parser.py with:
+  1. Identification of unique event names across all components.
+  2. Per-event sequence graph: for each unique event E, build a
+     directed-graph of "what event comes next most often" by scanning
+     all (event[i], event[i+1]) pairs within the same PID/component
+     session.  The graph is stored as a dict-of-dicts with edge counts
+     and can be rendered with graphviz (optional) or printed as text.
 """
 
 import argparse
 import sys
 import os
+from collections import defaultdict, Counter
 
+# ── re-use the existing parser ────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
-from parser import parse_log_file  # noqa: E402
-from event_names import get_unique_event_names  # noqa: E402
-from sequence_graph import build_sequence_graph  # noqa: E402
-from successor_tree import build_successor_tree, print_tree  # noqa: E402
+from parser import parse_log_file, parse_event  # noqa: E402
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1.  Unique event names
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def get_unique_event_names(parsed_logs: dict) -> set:
+    """Return the set of all distinct event *names* (ignoring data values)."""
+    names = set()
+    for logs in parsed_logs.values():
+        for log in logs:
+            names.add(log.event["name"])
+    return names
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2.  Sequence graph
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_sequence_graph(parsed_logs: dict, window: int = 1) -> dict:
+    """
+    Build a global transition graph over event names.
+
+    For every consecutive pair (event_i, event_{i+window}) that share the
+    same component *and* PID, increment edge[event_i][event_{i+window}].
+
+    Returns
+    -------
+    graph : dict[str, Counter]
+        graph[src][dst] = number of times dst followed src.
+    """
+    # Merge all logs into one time-ordered list per (component, pid)
+    sessions: dict[tuple, list] = defaultdict(list)
+    for component, logs in parsed_logs.items():
+        for log in logs:
+            sessions[(component, log.pid)].append(log)
+
+    # Sort each session by timestamp string (lexicographic sort works here
+    # because the format is YYYYMMDD-HH:MM:SS:mmm)
+    for key in sessions:
+        sessions[key].sort(key=lambda l: l.timestamp)
+
+    graph: dict[str, Counter] = defaultdict(Counter)
+
+    for session_logs in sessions.values():
+        for i in range(len(session_logs) - window):
+            src = session_logs[i].event["name"]
+            dst = session_logs[i + window].event["name"]
+            graph[src][dst] += 1
+
+    return graph
+
+
+def most_common_sequence(
+        graph: dict, start_event: str, depth: int = 5, threshold: int = 1, relative_threshold: float = 0.15
+) -> list:
+    """
+    Follow the single most-common successor at each step from start_event,
+    only considering edges whose count meets *threshold*.
+
+    Returns a list of (event_name, edge_count) tuples representing the path.
+    The first tuple has edge_count=None (it is the starting node).
+    """
+    path = [(start_event, None)]
+    visited = {start_event}
+    current = start_event
+
+    for _ in range(depth):
+        successors = graph.get(current)
+        if not successors:
+            break
+        # pick the most common successor not yet in path (avoid trivial cycles)
+        sucs = successors.most_common()
+        total = sum(j for _,j in sucs)
+
+        ranked = [(c, cnt) for c, cnt in sucs if cnt >= threshold and cnt/total > relative_threshold]
+        next_event = None
+        for candidate, count in ranked:
+            if candidate not in visited:
+                next_event = (candidate, count)
+                break
+        if next_event is None:
+            if not ranked:
+                break  # all successors below threshold — stop the chain
+            # allow revisit if no unvisited successor exists
+            next_event = (ranked[0][0], ranked[0][1])
+        path.append(next_event)
+        visited.add(next_event[0])
+        current = next_event[0]
+
+    return path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3.  Tree-structured "chunk" for each unique event
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_successor_tree(
+        graph: dict, root: str, branching: int = 2, depth: int = 4, threshold: int = 1, relative_threshold: float = 0.15
+) -> dict:
+    """
+    Build a tree (dict) rooted at *root* showing the *branching* most-common
+    successors at each level, up to *depth* levels deep.
+
+    Only edges with count >= *threshold* are considered; a branch is pruned
+    entirely once no qualifying successors remain.
+
+    Return value structure:
+        {
+          "name": "<event>",
+          "count": <edge weight from parent, None for root>,
+          "children": [ <same structure>, ... ]
+        }
+    """
+
+    def _recurse(node, remaining_depth, visited):
+        successors = graph.get(node, Counter())
+        children = []
+        # filter by threshold before picking top-branching candidates
+
+        sucs = successors.most_common()
+        total = sum(j for _,j in sucs)
+
+        qualified = [
+            (c, cnt)
+            for c, cnt in sucs
+            if cnt >= threshold and relative_threshold <= cnt/total and c not in visited
+        ]
+        for child, cnt in qualified[:branching]:
+            child_tree = {"name": child, "count": cnt, "children": []}
+            if remaining_depth > 1:
+                child_tree["children"] = _recurse(
+                    child, remaining_depth - 1, visited | {child}
+                )
+            children.append(child_tree)
+        return children
+
+    return {
+        "name": root,
+        "count": None,
+        "children": _recurse(root, depth, {root}),
+    }
+
+
+def print_tree(node: dict, prefix: str = "", is_last: bool = True) -> None:
+    connector = "└── " if is_last else "├── "
+    count_str = f"  (×{node['count']})" if node["count"] is not None else ""
+    print(prefix + (connector if prefix else "") + node["name"] + count_str)
+    child_prefix = prefix + ("    " if is_last else "│   ")
+    children = node["children"]
+    for i, child in enumerate(children):
+        print_tree(child, child_prefix, i == len(children) - 1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4.  Main demo
+# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
@@ -96,6 +259,7 @@ if __name__ == "__main__":
             branching=args.branching,
             depth=args.depth,
             threshold=args.threshold,
+            relative_threshold=args.relative_threshold
         )
         # only print trees that have at least one qualifying edge
         if tree["children"]:
