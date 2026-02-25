@@ -1,5 +1,3 @@
-import re
-
 class Log:
     def __init__(self, timestamp, component_name, pid, event):
         self.timestamp = timestamp;
@@ -12,6 +10,20 @@ class Log:
 
     def __repr__(self):
         return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
+
+def calculate_frequencies(d):
+    arr = [];
+    sum = 0;
+    for (k, v) in d.items():
+        arr.append((k, len(v)));
+        sum += len(v);
+    arr = sorted(arr);
+
+    ret = []
+    for (k, v) in arr:
+        ret.append((k, (v/sum) * 100))
+
+    return ret;
 
 def parse_event(content: str):
     content = content.strip()
@@ -60,8 +72,7 @@ if __name__ == "__main__":
     parsed_logs = parse_log_file("HealthApp.log")
 
     # Print first few entries for testing
-    for i, (k,v) in enumerate(parsed_logs.items()):
-        print(f"key: {k}, value: {v[:1]}")
+    calculate_frequencies(parsed_logs);
 
 if __name__ == "__main__":
     parsed_logs = parse_log_file("HealthApp.log")
