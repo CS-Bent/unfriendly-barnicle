@@ -211,6 +211,14 @@ if __name__ == "__main__":
         default=1,
         help="Look-ahead window when building transition pairs (default: 1).",
     )
+    ap.add_argument(
+        "--relative_threshold",
+        "-r",
+        type=float,
+        default=0.15,
+        help="Relative frequency that an A→B transition must "
+        "occur to be included in a chunk (default: 1).",
+    )
     args = ap.parse_args()
 
     print(f"Parsing log file: {args.log_file}")
