@@ -10,6 +10,9 @@ class Log:
     def __str__(self):
         return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
 
+    def __repr__(self):
+        return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
+
 def parse_event(content: str):
     """
     Splits event content into name + data.
@@ -27,7 +30,7 @@ def parse_event(content: str):
 
 
 def parse_log_file(filepath):
-    logs = []
+    logs = {}
 
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
@@ -43,8 +46,10 @@ def parse_log_file(filepath):
             date_str, component, pid_str, content = parts
 
             log = Log(date_str, component, pid_str, content);
+            if log not in logs:
+                logs[log.component_name] = []
 
-            logs.append(log)
+            logs[log.component_name].append(log)
 
     return logs
 
@@ -54,5 +59,5 @@ if __name__ == "__main__":
     parsed_logs = parse_log_file("HealthApp.log")
 
     # Print first few entries for testing
-    for log in parsed_logs[:5]:
-        print(log)
+    for i, (k,v) in enumerate(parsed_logs.items()):
+        print(f"key: {k}, value: {v[:1]}")
