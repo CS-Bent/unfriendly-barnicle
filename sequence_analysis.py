@@ -19,6 +19,16 @@ from collections import defaultdict, Counter
 sys.path.insert(0, os.path.dirname(__file__))
 from parser import parse_log_file, parse_event  # noqa: E402
 
+def print_frequencies(d):
+    arr = [];
+    sum = 0;
+    for (k, v) in d.items():
+        arr.append((len(v), k));
+        sum += len(v);
+    arr = sorted(arr)[::-1];
+
+    for (v, k) in arr:
+        print(f"{k}: encountered {v} times, {v/sum*100:.2f}%")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Unique event names
@@ -73,53 +83,13 @@ def build_sequence_graph(parsed_logs: dict, window: int = 1) -> dict:
     return graph
 
 
-def most_common_sequence(
-        graph: dict, start_event: str, depth: int = 5, threshold: int = 1, relative_threshold: float = 0.15
-) -> list:
-    """
-    Follow the single most-common successor at each step from start_event,
-    only considering edges whose count meets *threshold*.
-
-    Returns a list of (event_name, edge_count) tuples representing the path.
-    The first tuple has edge_count=None (it is the starting node).
-    """
-    path = [(start_event, None)]
-    visited = {start_event}
-    current = start_event
-
-    for _ in range(depth):
-        successors = graph.get(current)
-        if not successors:
-            break
-        # pick the most common successor not yet in path (avoid trivial cycles)
-        sucs = successors.most_common()
-        total = sum(j for _,j in sucs)
-
-        ranked = [(c, cnt) for c, cnt in sucs if cnt >= threshold and cnt/total > relative_threshold]
-        next_event = None
-        for candidate, count in ranked:
-            if candidate not in visited:
-                next_event = (candidate, count)
-                break
-        if next_event is None:
-            if not ranked:
-                break  # all successors below threshold — stop the chain
-            # allow revisit if no unvisited successor exists
-            next_event = (ranked[0][0], ranked[0][1])
-        path.append(next_event)
-        visited.add(next_event[0])
-        current = next_event[0]
-
-    return path
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 3.  Tree-structured "chunk" for each unique event
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def build_successor_tree(
-        graph: dict, root: str, branching: int = 2, depth: int = 4, threshold: int = 1, relative_threshold: float = 0.15
+        graph: dict, root: str, branching: int = 2, depth: int = 4, threshold: int = 1, relative_threshold: float = 0.15, inverted: bool = False
 ) -> dict:
     """
     Build a tree (dict) rooted at *root* showing the *branching* most-common
@@ -143,11 +113,12 @@ def build_successor_tree(
 
         sucs = successors.most_common()
         total = sum(j for _,j in sucs)
-
+        
         qualified = [
             (c, cnt)
             for c, cnt in sucs
-            if cnt >= threshold and relative_threshold <= cnt/total and c not in visited
+            if (inverted and cnt < threshold and relative_threshold > cnt/total and c not in visited) or
+                (not inverted and cnt >= threshold and relative_threshold <= cnt/total and c not in visited)
         ]
         for child, cnt in qualified[:branching]:
             child_tree = {"name": child, "count": cnt, "children": []}
@@ -226,30 +197,41 @@ if __name__ == "__main__":
         help="Relative frequency that an A→B transition must "
         "occur to be included in a chunk (default: 1).",
     )
+    ap.add_argument(
+        "--inverted",
+        "-i",
+    )
     args = ap.parse_args()
 
     print(f"Parsing log file: {args.log_file}")
-    print(
-        f"Threshold : transitions must occur ≥ {args.threshold} time(s) to form a chunk\n"
-    )
-    parsed_logs = parse_log_file(args.log_file)
+    if args.inverted is None:
+        print(
+            f"Threshold : transitions must occur ≥ {args.threshold} time(s) to form a chunk and must occur at a relative rate of ≥ {args.relative_threshold}\n"
+        )
+    else:
+        print(
+            f"Threshold : transitions must occur < {args.threshold} time(s) to form a chunk and must occur at a relative rate of < {args.relative_threshold}\n"
+        )
+    parsed_logs, total = parse_log_file(args.log_file)
 
     # ── 1. Unique events ──────────────────────────────────────────────────────
     unique_events = get_unique_event_names(parsed_logs)
     print(f"{'='*60}")
+    print(f"Total amount of events: {total}")
+    print()
+    print(f"Component frequency:")
+    print_frequencies(parsed_logs)
+    print()
     print(f"Unique event names ({len(unique_events)} total):")
     for name in sorted(unique_events):
         print(f"  {name}")
 
-    # ── 2. Transition graph ───────────────────────────────────────────────────
-    print(f"\n{'='*60}")
-    print(f"Building sequence graph (window={args.window}) …")
     graph = build_sequence_graph(parsed_logs, window=args.window)
 
     # ── 3. Successor trees for every unique event ─────────────────────────────
     print(f"\n{'='*60}")
     print(
-        f"Most-common successor trees "
+        f"Filtered successor trees "
         f"(threshold={args.threshold}, branching={args.branching}, depth={args.depth}):\n"
     )
     for event_name in sorted(unique_events):
@@ -259,7 +241,8 @@ if __name__ == "__main__":
             branching=args.branching,
             depth=args.depth,
             threshold=args.threshold,
-            relative_threshold=args.relative_threshold
+            relative_threshold=args.relative_threshold,
+            inverted=(args.inverted is not None)
         )
         # only print trees that have at least one qualifying edge
         if tree["children"]:

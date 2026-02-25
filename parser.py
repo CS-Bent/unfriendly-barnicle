@@ -40,6 +40,7 @@ def parse_event(content: str):
 
 def parse_log_file(filepath):
     logs = {}
+    total = 0;
 
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
@@ -60,8 +61,9 @@ def parse_log_file(filepath):
                 logs[component] = []
 
             logs[component].append(log)
+            total += 1
 
-    return logs
+    return (logs, total)
 
 
 # === RUN ===
@@ -72,7 +74,7 @@ if __name__ == "__main__":
     calculate_frequencies(parsed_logs)
 
 if __name__ == "__main__":
-    parsed_logs = parse_log_file("HealthApp.log")
+    parsed_logs, total = parse_log_file("HealthApp.log")
 
     # Collect unique event names
     unique_events = set(
