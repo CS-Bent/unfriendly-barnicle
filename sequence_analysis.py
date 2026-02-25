@@ -10,6 +10,7 @@ Extends parser.py with:
      and can be rendered with graphviz (optional) or printed as text.
 """
 
+import argparse
 import sys
 import os
 from collections import defaultdict, Counter
@@ -72,9 +73,12 @@ def build_sequence_graph(parsed_logs: dict, window: int = 1) -> dict:
     return graph
 
 
-def most_common_sequence(graph: dict, start_event: str, depth: int = 5) -> list:
+def most_common_sequence(
+    graph: dict, start_event: str, depth: int = 5, threshold: int = 1
+) -> list:
     """
-    Follow the single most-common successor at each step from start_event.
+    Follow the single most-common successor at each step from start_event,
+    only considering edges whose count meets *threshold*.
 
     Returns a list of (event_name, edge_count) tuples representing the path.
     The first tuple has edge_count=None (it is the starting node).
@@ -88,16 +92,17 @@ def most_common_sequence(graph: dict, start_event: str, depth: int = 5) -> list:
         if not successors:
             break
         # pick the most common successor not yet in path (avoid trivial cycles)
-        ranked = successors.most_common()
+        ranked = [(c, cnt) for c, cnt in successors.most_common() if cnt >= threshold]
         next_event = None
         for candidate, count in ranked:
             if candidate not in visited:
                 next_event = (candidate, count)
                 break
         if next_event is None:
+            if not ranked:
+                break  # all successors below threshold — stop the chain
             # allow revisit if no unvisited successor exists
-            next_event = ranked[0]
-            next_event = (next_event[0], next_event[1])
+            next_event = (ranked[0][0], ranked[0][1])
         path.append(next_event)
         visited.add(next_event[0])
         current = next_event[0]
@@ -111,11 +116,14 @@ def most_common_sequence(graph: dict, start_event: str, depth: int = 5) -> list:
 
 
 def build_successor_tree(
-    graph: dict, root: str, branching: int = 2, depth: int = 4
+    graph: dict, root: str, branching: int = 2, depth: int = 4, threshold: int = 1
 ) -> dict:
     """
     Build a tree (dict) rooted at *root* showing the *branching* most-common
     successors at each level, up to *depth* levels deep.
+
+    Only edges with count >= *threshold* are considered; a branch is pruned
+    entirely once no qualifying successors remain.
 
     Return value structure:
         {
@@ -128,9 +136,13 @@ def build_successor_tree(
     def _recurse(node, remaining_depth, visited):
         successors = graph.get(node, Counter())
         children = []
-        for child, cnt in successors.most_common(branching):
-            if child in visited:
-                continue
+        # filter by threshold before picking top-branching candidates
+        qualified = [
+            (c, cnt)
+            for c, cnt in successors.most_common()
+            if cnt >= threshold and c not in visited
+        ]
+        for child, cnt in qualified[:branching]:
             child_tree = {"name": child, "count": cnt, "children": []}
             if remaining_depth > 1:
                 child_tree["children"] = _recurse(
@@ -161,27 +173,79 @@ def print_tree(node: dict, prefix: str = "", is_last: bool = True) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    LOG_FILE = "HealthApp.log"
+    ap = argparse.ArgumentParser(
+        description="Analyse event sequences in a HealthApp log file."
+    )
+    ap.add_argument(
+        "log_file",
+        nargs="?",
+        default="HealthApp.log",
+        help="Path to the log file (default: HealthApp.log)",
+    )
+    ap.add_argument(
+        "--threshold",
+        "-t",
+        type=int,
+        default=1,
+        help="Minimum number of times an A→B transition must "
+        "occur to be included in a chunk (default: 1).",
+    )
+    ap.add_argument(
+        "--branching",
+        "-b",
+        type=int,
+        default=2,
+        help="Max successors shown per node in the tree (default: 2).",
+    )
+    ap.add_argument(
+        "--depth",
+        "-d",
+        type=int,
+        default=4,
+        help="Max depth of each successor tree (default: 4).",
+    )
+    ap.add_argument(
+        "--window",
+        "-w",
+        type=int,
+        default=1,
+        help="Look-ahead window when building transition pairs (default: 1).",
+    )
+    args = ap.parse_args()
 
-    print("Parsing log file …")
-    parsed_logs = parse_log_file(LOG_FILE)
+    print(f"Parsing log file: {args.log_file}")
+    print(
+        f"Threshold : transitions must occur ≥ {args.threshold} time(s) to form a chunk\n"
+    )
+    parsed_logs = parse_log_file(args.log_file)
 
     # ── 1. Unique events ──────────────────────────────────────────────────────
     unique_events = get_unique_event_names(parsed_logs)
-    print(f"\n{'='*60}")
+    print(f"{'='*60}")
     print(f"Unique event names ({len(unique_events)} total):")
     for name in sorted(unique_events):
         print(f"  {name}")
 
     # ── 2. Transition graph ───────────────────────────────────────────────────
     print(f"\n{'='*60}")
-    print("Building sequence graph (window=1) …")
-    graph = build_sequence_graph(parsed_logs, window=1)
+    print(f"Building sequence graph (window={args.window}) …")
+    graph = build_sequence_graph(parsed_logs, window=args.window)
 
     # ── 3. Successor trees for every unique event ─────────────────────────────
     print(f"\n{'='*60}")
-    print("Most-common successor trees (branching=2, depth=4):\n")
+    print(
+        f"Most-common successor trees "
+        f"(threshold={args.threshold}, branching={args.branching}, depth={args.depth}):\n"
+    )
     for event_name in sorted(unique_events):
-        tree = build_successor_tree(graph, event_name, branching=2, depth=4)
-        print_tree(tree)
-        print()
+        tree = build_successor_tree(
+            graph,
+            event_name,
+            branching=args.branching,
+            depth=args.depth,
+            threshold=args.threshold,
+        )
+        # only print trees that have at least one qualifying edge
+        if tree["children"]:
+            print_tree(tree)
+            print()
