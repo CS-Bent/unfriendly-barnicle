@@ -3,10 +3,10 @@ import sys
 
 class Log:
     def __init__(self, timestamp, component_name, pid, event):
-        self.timestamp = timestamp;
-        self.component_name = component_name;
-        self.pid = int(pid);
-        self.event = event;
+        self.timestamp = timestamp
+        self.component_name = component_name
+        self.pid = int(pid)
+        self.event = event
 
     def __str__(self):
         return f"time: {self.timestamp} | component name: {self.component_name} | pid: {self.pid} | event: {self.event}"
@@ -25,22 +25,16 @@ def print_frequencies(d):
     for (v, k) in arr:
         print(f"{k}: encountered {v} times, {v/sum*100:.2f}%")
 
-
 def parse_event(content: str):
     content = content.strip()
 
     for i, ch in enumerate(content):
         if not ch.isalpha():  # first non-alphanumeric char
-            return {
-                "name": content[:i],
-                "event_data": content[i+1:].strip()
-            }
+            return {"name": content[:i], "event_data": content[i + 1 :].strip()}
 
     # no delimiter found
-    return {
-        "name": content,
-        "event_data": ""
-    }
+    return {"name": content, "event_data": ""}
+
 
 
 log_num = 0
@@ -48,6 +42,7 @@ log_num = 0
 def parse_log_file(filepath):
     global log_num
     logs = {}
+    total = 0;
 
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
@@ -68,9 +63,9 @@ def parse_log_file(filepath):
                 logs[component] = []
 
             logs[component].append(log)
-            log_num += 1
+            total += 1
 
-    return logs
+    return (logs, total)
 
 def parse_arguments(args):
     if len(args) < 2:
@@ -116,13 +111,11 @@ if __name__ == "__main__":
 
 """
 if __name__ == "__main__":
-    parsed_logs = parse_log_file("HealthApp.log")
+    parsed_logs, total = parse_log_file("HealthApp.log")
 
     # Collect unique event names
     unique_events = set(
-        log.event["name"]
-        for logs in parsed_logs.values()
-        for log in logs
+        log.event["name"] for logs in parsed_logs.values() for log in logs
     )
 
     # Print results
