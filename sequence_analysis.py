@@ -1,13 +1,5 @@
 """
 sequence_analysis.py
-
-Extends parser.py with:
-  1. Identification of unique event names across all components.
-  2. Per-event sequence graph: for each unique event E, build a
-     directed-graph of "what event comes next most often" by scanning
-     all (event[i], event[i+1]) pairs within the same PID/component
-     session.  The graph is stored as a dict-of-dicts with edge counts
-     and can be rendered with graphviz (optional) or printed as text.
 """
 
 import argparse
@@ -15,10 +7,11 @@ import sys
 import os
 from collections import defaultdict, Counter
 
-# ── re-use the existing parser ────────────────────────────────────────────────
+"Import parser from parser.py"
 sys.path.insert(0, os.path.dirname(__file__))
-from parser import parse_log_file, parse_event  # noqa: E402
+from parser import parse_log_file
 
+"Print all of the frequencies of the software component"
 def print_frequencies(d):
     arr = [];
     sum = 0;
@@ -30,37 +23,29 @@ def print_frequencies(d):
     for (v, k) in arr:
         print(f"{k}: encountered {v} times, {v/sum*100:.2f}%")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1.  Unique event names
-# ─────────────────────────────────────────────────────────────────────────────
 
-
+"Return a set of all the unique event names of the dataset"
 def get_unique_event_names(parsed_logs: dict) -> set:
-    """Return the set of all distinct event *names* (ignoring data values)."""
     names = set()
     for logs in parsed_logs.values():
         for log in logs:
             names.add(log.event["name"])
     return names
 
+"""
+For every element i in the list, we check (i, i+{window}) in the list of events. window is 1 by default
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2.  Sequence graph
-# ─────────────────────────────────────────────────────────────────────────────
+For every pair (i, i+{window}) that share the
+same component and PID, increment edge[event_i][event_{i+window}].
 
+We group every event by component because they may occur in parallel and the cycle should still be identical even if the events of different components differ in order.
 
+Returns
+-------
+graph : dict[str, Counter]
+    graph[src][dst] = number of times dst followed src.
+"""
 def build_sequence_graph(parsed_logs: dict, window: int = 1) -> dict:
-    """
-    Build a global transition graph over event names.
-
-    For every consecutive pair (event_i, event_{i+window}) that share the
-    same component *and* PID, increment edge[event_i][event_{i+window}].
-
-    Returns
-    -------
-    graph : dict[str, Counter]
-        graph[src][dst] = number of times dst followed src.
-    """
     # Merge all logs into one time-ordered list per (component, pid)
     sessions: dict[tuple, list] = defaultdict(list)
     for component, logs in parsed_logs.items():
@@ -83,11 +68,6 @@ def build_sequence_graph(parsed_logs: dict, window: int = 1) -> dict:
     return graph
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3.  Tree-structured "chunk" for each unique event
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def build_successor_tree(
         graph: dict, root: str, branching: int = 2, depth: int = 4, threshold: int = 1, relative_threshold: float = 0.15, inverted: bool = False
 ) -> dict:
@@ -95,8 +75,7 @@ def build_successor_tree(
     Build a tree (dict) rooted at *root* showing the *branching* most-common
     successors at each level, up to *depth* levels deep.
 
-    Only edges with count >= *threshold* are considered; a branch is pruned
-    entirely once no qualifying successors remain.
+    Only edges with count >= *threshold* are considered;
 
     Return value structure:
         {
@@ -105,7 +84,6 @@ def build_successor_tree(
           "children": [ <same structure>, ... ]
         }
     """
-
     def _recurse(node, remaining_depth, visited):
         successors = graph.get(node, Counter())
         children = []
@@ -137,18 +115,18 @@ def build_successor_tree(
 
 
 def print_tree(node: dict, prefix: str = "", is_last: bool = True) -> None:
-    connector = "└── " if is_last else "├── "
-    count_str = f"  (×{node['count']})" if node["count"] is not None else ""
+    connector = "|---"
+
+    count_str = f"  (x{node['count']})" if node["count"] is not None else ""
+
     print(prefix + (connector if prefix else "") + node["name"] + count_str)
-    child_prefix = prefix + ("    " if is_last else "│   ")
+
+    child_prefix = prefix + ("    " if is_last else "|   ")
     children = node["children"]
+
     for i, child in enumerate(children):
         print_tree(child, child_prefix, i == len(children) - 1)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4.  Main demo
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
@@ -165,7 +143,7 @@ if __name__ == "__main__":
         "-t",
         type=int,
         default=1,
-        help="Minimum number of times an A→B transition must "
+        help="Minimum number of times an A->B transition must "
         "occur to be included in a chunk (default: 1).",
     )
     ap.add_argument(
@@ -194,7 +172,7 @@ if __name__ == "__main__":
         "-r",
         type=float,
         default=0.15,
-        help="Relative frequency that an A→B transition must "
+        help="Relative frequency that an A->B transition must "
         "occur to be included in a chunk (default: 1).",
     )
     ap.add_argument(
@@ -206,7 +184,7 @@ if __name__ == "__main__":
     print(f"Parsing log file: {args.log_file}")
     if args.inverted is None:
         print(
-            f"Threshold : transitions must occur ≥ {args.threshold} time(s) to form a chunk and must occur at a relative rate of ≥ {args.relative_threshold}\n"
+            f"Threshold : transitions must occur >= {args.threshold} time(s) to form a chunk and must occur at a relative rate of >= {args.relative_threshold}\n"
         )
     else:
         print(
@@ -214,7 +192,6 @@ if __name__ == "__main__":
         )
     parsed_logs, total = parse_log_file(args.log_file)
 
-    # ── 1. Unique events ──────────────────────────────────────────────────────
     unique_events = get_unique_event_names(parsed_logs)
     print(f"{'='*60}")
     print(f"Total amount of events: {total}")
@@ -228,7 +205,6 @@ if __name__ == "__main__":
 
     graph = build_sequence_graph(parsed_logs, window=args.window)
 
-    # ── 3. Successor trees for every unique event ─────────────────────────────
     print(f"\n{'='*60}")
     print(
         f"Filtered successor trees "
